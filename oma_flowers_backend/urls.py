@@ -26,12 +26,14 @@ urlpatterns = [
     path('api/v1/auth/', include('users.urls')),
     path('api/v1/distributors/', include('distributors.urls')),
     path('api/v1/shops/', include('shops.urls')),
-    path('api/v1/products/', include('products.urls')),
+    path('api/v1/', include('products.urls')),
     path('api/v1/orders/', include('orders.urls')),
     path('api/v1/commissions/', include('commissions.urls')),
     path('api/v1/bonuses/', include('bonuses.urls')),
     path('api/v1/awards/', include('awards.urls')),
     path('api/v1/blog/', include('blog.urls')),
+    path('api/v1/carts/', include('cart.urls')),
+    
     
     # API Documentation
     path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),

@@ -39,6 +39,8 @@ INSTALLED_APPS = [
     'bonuses',
     'awards',
     'blog',
+    'cart',
+    
 ]
 
 MIDDLEWARE = [

@@ -1,25 +1,33 @@
+# products/models.py
 from django.db import models
 
-# Create your models here.
-from django.db import models
 
 class Category(models.Model):
+    """
+    One of the OMA Flowers sellable SKUs.
+
+    Examples:
+        CCA  Classic Class A Flower  —  6 BV,  TSh 56,000
+        LCA  Luxury  Class A Flower  — 20 BV,  TSh 250,000
+    """
+
     TYPE_CHOICES = (
         ('Classic', 'Classic'),
         ('Luxury', 'Luxury'),
     )
-    
+
     CLASS_CHOICES = (
-        ('A', 'A'),
-        ('B', 'B'),
-        ('C', 'C'),
+        ('A', 'A — Table / Home / Office / Church flowers'),
+        ('B', 'B — Wedding / Graduation flowers'),
+        ('C', 'C — Gift & Premium flower packages'),
+        ('D', 'D — Decoration kits & Event decoration'),
     )
-    
+
     STATUS_CHOICES = (
         ('active', 'Active'),
         ('inactive', 'Inactive'),
     )
-    
+
     name = models.CharField(max_length=50, unique=True)
     code = models.CharField(max_length=10, unique=True)
     description = models.TextField(blank=True, null=True)
@@ -30,13 +38,15 @@ class Category(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         db_table = 'categories'
         ordering = ['type', 'class_type']
-    
+        verbose_name_plural = 'Categories'
+
     def __str__(self):
-        return f"{self.code} - {self.name}"
+        return f"{self.code} — {self.name} ({self.bv} BV, TSh {self.price})"
+
 
 class Product(models.Model):
     STATUS_CHOICES = (
@@ -44,30 +54,47 @@ class Product(models.Model):
         ('inactive', 'Inactive'),
         ('coming_soon', 'Coming Soon'),
     )
-    
-    category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='products')
+
+    category = models.ForeignKey(
+        Category,
+        on_delete=models.CASCADE,
+        related_name='products',
+    )
     sku = models.CharField(max_length=50, unique=True)
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True)
-    price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    bv = models.PositiveIntegerField(null=True, blank=True)
+    price = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text='Leave blank to inherit from the category.',
+    )
+    bv = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text='Leave blank to inherit from the category.',
+    )
     stock = models.PositiveIntegerField(default=0)
     sales = models.PositiveIntegerField(default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
+
+    product_picture = models.TextField(
+        blank=True,
+        null=True,
+        help_text='Base64 encoded image (data:image/...;base64,...)',
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         db_table = 'products'
         ordering = ['-created_at']
-    
+
     def __str__(self):
         return self.name
-    
+
     @property
     def effective_price(self):
         return self.price if self.price is not None else self.category.price
-    
+
     @property
     def effective_bv(self):
         return self.bv if self.bv is not None else self.category.bv

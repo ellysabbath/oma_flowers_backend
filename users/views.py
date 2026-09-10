@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
+from rest_framework import generics, permissions, filters
 from django.core.mail import send_mail
 from django.conf import settings
 from django.utils import timezone
@@ -388,19 +389,14 @@ class ResetPasswordVerifyView(APIView):
 
 class AdminUsersListView(generics.ListAPIView):
     """
-    Get all users for admin (to convert to distributors)
-    Only accessible by admin users
+    Get all users (for converting to distributors)
+    Any authenticated user can access this
     """
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
-        # Only admins can access this
-        if not self.request.user.is_admin():
-            logger.warning(f"Non-admin user {self.request.user.email} tried to access admin users")
-            return User.objects.none()
-        
-        # Start with all users
+        # Start with all users - NO admin check
         queryset = User.objects.all().order_by('-created_at')
         
         # Filter by user_type if provided
@@ -418,20 +414,18 @@ class AdminUsersListView(generics.ListAPIView):
         if exclude_distributors == 'true':
             queryset = queryset.exclude(user_type='distributor')
         
-        # Log the query
-        logger.info(f"Admin users query: {queryset.query}")
-        logger.info(f"Found {queryset.count()} users")
+        # Exclude admin users from the list
+        queryset = queryset.exclude(user_type='admin')
         
         return queryset
-    
-    def list(self, request, *args, **kwargs):
-        # Log the request
-        logger.info(f"Admin users request from {request.user.email}")
-        logger.info(f"Query params: {request.query_params}")
-        
-        response = super().list(request, *args, **kwargs)
-        
-        # Log the response
-        logger.info(f"Response data: {response.data}")
-        
-        return response
+
+
+class CustomerListView(generics.ListAPIView):
+    """
+    List all customers (users with user_type='customer')
+    """
+    queryset = User.objects.filter(user_type='customer').order_by('-created_at')
+    serializer_class = UserSerializer
+    permission_classes = [permissions.AllowAny]  # Or IsAuthenticated for production
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['email', 'first_name', 'last_name', 'full_name']

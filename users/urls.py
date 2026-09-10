@@ -4,7 +4,7 @@ from .views import (
     UserProfileView, UpdateProfileView, ChangePasswordView,
     VerifyEmailView, ResendVerificationView,
     ResetPasswordRequestView, ResetPasswordVerifyView,
-    AdminUsersListView  # Add this import
+    AdminUsersListView,CustomerListView  # Add this import
 )
 
 urlpatterns = [
@@ -22,4 +22,5 @@ urlpatterns = [
     
     # Admin endpoints
     path('admin/users/', AdminUsersListView.as_view(), name='admin-users-list'),  # Add this
+    path('customers/', CustomerListView.as_view(), name='customer-list'),
 ]
