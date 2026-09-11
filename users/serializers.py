@@ -5,16 +5,24 @@ from .models import User
 
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = User
         fields = (
             'id', 'email', 'username', 'first_name', 'last_name', 'full_name',
             'phone', 'country', 'region', 'city', 'profile_picture',
-            'user_type', 'status', 'email_verified', 'created_at'
+            'user_type', 'status', 'email_verified', 'email_verified_at',
+            'created_at', 'updated_at',
+            'last_login', 'date_joined',      # 👈 added
+            'is_active', 'is_staff', 'is_superuser',   # 👈 optional
         )
-        read_only_fields = ('email_verified', 'created_at', 'user_type', 'status')
-    
+        read_only_fields = (
+            'email_verified', 'created_at', 'updated_at',
+            'user_type', 'status',
+            'last_login', 'date_joined',
+            'is_active', 'is_staff', 'is_superuser',
+        )
+
     def get_full_name(self, obj):
         return obj.full_name
 

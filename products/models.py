@@ -1,4 +1,14 @@
 # products/models.py
+"""
+OMA Flowers — Product & Category models.
+
+Includes:
+  • Category (SKUs like CCA, LCA, etc.)
+  • Product with optional seller (distributor who earns PBV/CGV)
+  • Auto-recomputes the seller's shops whenever sales, seller, or BV changes
+    (no signals — handled in Product.save() and Product.delete())
+"""
+
 from django.db import models
 
 
@@ -60,6 +70,17 @@ class Product(models.Model):
         on_delete=models.CASCADE,
         related_name='products',
     )
+
+    # The distributor who earns PBV/CGV when this product sells
+    seller = models.ForeignKey(
+        'distributors.Distributor',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='products_sold',
+        help_text='The distributor who earns PBV/CGV when this product is sold.',
+    )
+
     sku = models.CharField(max_length=50, unique=True)
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True)
@@ -76,8 +97,7 @@ class Product(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
 
     product_picture = models.TextField(
-        blank=True,
-        null=True,
+        blank=True, null=True,
         help_text='Base64 encoded image (data:image/...;base64,...)',
     )
 
@@ -91,6 +111,10 @@ class Product(models.Model):
     def __str__(self):
         return self.name
 
+    # ----------------------------------------------------------------
+    # Derived helpers
+    # ----------------------------------------------------------------
+
     @property
     def effective_price(self):
         return self.price if self.price is not None else self.category.price
@@ -98,3 +122,63 @@ class Product(models.Model):
     @property
     def effective_bv(self):
         return self.bv if self.bv is not None else self.category.bv
+
+    @property
+    def seller_name(self):
+        if not self.seller:
+            return None
+        return (
+            getattr(self.seller, 'full_name', None)
+            or getattr(self.seller.user, 'full_name', None)
+            or getattr(self.seller.user, 'email', None)
+        )
+
+    # ----------------------------------------------------------------
+    # Auto-recompute the seller's shops on every save
+    # ----------------------------------------------------------------
+    def save(self, *args, **kwargs):
+        # Snapshot previous seller/sales/bv to detect meaningful changes
+        prev_seller_id = None
+        prev_sales = None
+        prev_bv = None
+
+        if self.pk is not None:
+            try:
+                prev = Product.objects.only(
+                    'seller_id', 'sales', 'bv'
+                ).get(pk=self.pk)
+                prev_seller_id = prev.seller_id
+                prev_sales = prev.sales
+                prev_bv = prev.bv
+            except Product.DoesNotExist:
+                prev = None
+
+        super().save(*args, **kwargs)
+
+        seller_changed = prev_seller_id != self.seller_id
+        sales_changed = prev_sales != self.sales
+        bv_changed = prev_bv != self.bv
+
+        if not (seller_changed or sales_changed or bv_changed):
+            return
+
+        # Recompute shops for the current seller (if any)
+        from shops.models import Shop
+
+        if self.seller_id:
+            Shop.recompute_for_distributor(self.seller_id)
+
+        # If the seller changed, recompute the old seller's shops too
+        if seller_changed and prev_seller_id and prev_seller_id != self.seller_id:
+            Shop.recompute_for_distributor(prev_seller_id)
+
+    # ----------------------------------------------------------------
+    # Auto-recompute the seller's shops when a product is deleted
+    # ----------------------------------------------------------------
+    def delete(self, *args, **kwargs):
+        seller_id = self.seller_id
+        super().delete(*args, **kwargs)
+
+        if seller_id:
+            from shops.models import Shop
+            Shop.recompute_for_distributor(seller_id)

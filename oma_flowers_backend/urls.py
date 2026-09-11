@@ -33,6 +33,7 @@ urlpatterns = [
     path('api/v1/awards/', include('awards.urls')),
     path('api/v1/blog/', include('blog.urls')),
     path('api/v1/carts/', include('cart.urls')),
+    path('api/v1/admini/users/', include('users.admin_urls')),
     
     
     # API Documentation

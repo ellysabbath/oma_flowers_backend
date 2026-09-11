@@ -3,6 +3,8 @@ from rest_framework import serializers
 from .models import Category, Product
 
 
+# ==================== CATEGORY ====================
+
 class CategorySerializer(serializers.ModelSerializer):
     product_count = serializers.IntegerField(read_only=True)
     class_type_display = serializers.CharField(
@@ -41,16 +43,22 @@ class CategoryCreateSerializer(serializers.ModelSerializer):
         if Category.objects.filter(code=value).exists():
             if self.instance and self.instance.code == value:
                 return value
-            raise serializers.ValidationError('Category with this code already exists.')
+            raise serializers.ValidationError(
+                'Category with this code already exists.'
+            )
         return value
 
     def validate_name(self, value):
         if Category.objects.filter(name=value).exists():
             if self.instance and self.instance.name == value:
                 return value
-            raise serializers.ValidationError('Category with this name already exists.')
+            raise serializers.ValidationError(
+                'Category with this name already exists.'
+            )
         return value
 
+
+# ==================== PRODUCT ====================
 
 class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
@@ -64,12 +72,17 @@ class ProductSerializer(serializers.ModelSerializer):
     )
     effective_bv = serializers.IntegerField(read_only=True)
 
+    # 👇 NEW — seller info for display
+    seller_name = serializers.SerializerMethodField()
+    seller_rank = serializers.SerializerMethodField()
+
     class Meta:
         model = Product
         fields = (
             'id', 'category',
             'category_name', 'category_code',
             'category_type', 'category_class_type',
+            'seller', 'seller_name', 'seller_rank',          # 👈 NEW
             'sku', 'name', 'description',
             'price', 'bv', 'effective_price', 'effective_bv',
             'stock', 'sales', 'status', 'product_picture',
@@ -77,20 +90,41 @@ class ProductSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('id', 'created_at', 'updated_at')
 
+    def get_seller_name(self, obj):
+        if not obj.seller:
+            return None
+        # Prefer distributor.full_name, fall back to user.full_name / username / email
+        return (
+            getattr(obj.seller, 'full_name', None)
+            or getattr(obj.seller.user, 'full_name', None)
+            or getattr(obj.seller.user, 'username', None)
+            or getattr(obj.seller.user, 'email', None)
+        )
 
-# products/serializers.py
+    def get_seller_rank(self, obj):
+        return obj.seller.rank if obj.seller else None
+
+
 class ProductCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = (
-            'id', 'category', 'sku', 'name', 'description',
+            'id',
+            'category',
+            'seller',                                         # 👈 MUST be here
+            'sku', 'name', 'description',
             'price', 'bv', 'stock', 'status', 'product_picture',
         )
         extra_kwargs = {
             'category': {'required': True},
-            'sku': {'required': False, 'allow_blank': True},   # ← make optional
+            'seller': {'required': False, 'allow_null': True},  # 👈 NEW
+            'sku': {'required': False, 'allow_blank': True},
             'name': {'required': True},
-            # ...
+            'price': {'required': False, 'allow_null': True},
+            'bv': {'required': False, 'allow_null': True},
+            'product_picture': {
+                'required': False, 'allow_null': True, 'allow_blank': True,
+            },
         }
 
     def create(self, validated_data):
@@ -110,15 +144,12 @@ class ProductCreateSerializer(serializers.ModelSerializer):
     def _generate_sku(self, category):
         """
         Compose a SKU like CCA-0001, CCA-0002, ... per category.
-        Uses a select_for_update to avoid races in production.
-        Falls back to timestamp on collision.
         """
         from django.db import transaction
         import time
 
-        prefix = category.code  # 'CCA', 'LCA', etc.
+        prefix = category.code
         with transaction.atomic():
-            # Count existing products in this category
             existing = (
                 Product.objects.select_for_update()
                 .filter(category=category)
@@ -127,12 +158,10 @@ class ProductCreateSerializer(serializers.ModelSerializer):
             next_num = existing + 1
             candidate = f"{prefix}-{next_num:04d}"
 
-            # Ensure uniqueness (race-safe): bump until free
             while Product.objects.filter(sku=candidate).exists():
                 next_num += 1
                 candidate = f"{prefix}-{next_num:04d}"
 
-            # Extreme edge case: too many sequential attempts
             if next_num > existing + 1000:
                 candidate = f"{prefix}-{int(time.time() * 1000)}"
 

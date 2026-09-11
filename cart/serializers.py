@@ -44,28 +44,42 @@ class CartShopMiniSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'location', 'region', 'country']
 
 
+# ---------- Cart item ----------
+
 class CartItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
     product_sku = serializers.CharField(source='product.sku', read_only=True)
-    product_picture = serializers.CharField(source='product.product_picture', read_only=True)
-    subtotal = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    product_picture = serializers.CharField(
+        source='product.product_picture', read_only=True
+    )
+    subtotal = serializers.DecimalField(
+        max_digits=12, decimal_places=2, read_only=True
+    )
+
+    seller_id = serializers.IntegerField(
+        source='product.seller.id', read_only=True, allow_null=True
+    )
+    seller_name = serializers.CharField(
+        source='product.seller_name', read_only=True
+    )
+    seller_rank = serializers.CharField(
+        source='product.seller.rank', read_only=True, allow_null=True
+    )
 
     class Meta:
         model = CartItem
         fields = [
             'id', 'cart', 'product', 'product_name', 'product_sku',
             'product_picture', 'quantity', 'price', 'bv', 'subtotal',
+            'seller_id', 'seller_name', 'seller_rank',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
-# ---------- Write serializer for cart items ----------
-
 class CartItemWriteSerializer(serializers.Serializer):
     product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
     quantity = serializers.IntegerField(min_value=1)
-    # Optional overrides — otherwise pulled from product.effective_price / bv
     price = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
     bv = serializers.IntegerField(min_value=0, required=False)
 
@@ -85,12 +99,13 @@ class CartSerializer(serializers.ModelSerializer):
     class Meta:
         model = Cart
         fields = [
-            'id', 'user', 'distributor', 'shop', 'session_key',
+            'id', 'code',                            # 👈 NEW
+            'user', 'distributor', 'shop', 'session_key',
             'status', 'notes',
             'items', 'subtotal', 'total_bv', 'total_items',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'code', 'created_at', 'updated_at']   # 👈 code is read-only
 
 
 # ---------- Cart write serializer (create/update) ----------
@@ -123,5 +138,7 @@ class CartWriteSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'user_id', 'distributor_id', 'shop_id',
             'session_key', 'status', 'notes',
+            # NOTE: `code` is intentionally NOT here — the model
+            # generates it automatically on first save.
         ]
         read_only_fields = ['id']
