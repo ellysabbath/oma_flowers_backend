@@ -161,3 +161,7 @@ EMAIL_HOST_PASSWORD = 'sbntxflapmitoakx'
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 DEFAULT_FROM_EMAIL = 'noreply@omaflowers.com'
+AT_USERNAME = "qfix"                # your AT production username
+AT_API_KEY = "atsk_6dfbdde777d4e87a975bbb7447cf85628af5d12e8a401c34b750442f0897b0db970e67cb"                 # new key from AT dashboard
+AT_SENDER_ID = "QuickFix"                         # optional shortcode
+AT_BASE_URL = "https://api.africastalking.com/version1/messaging"
