@@ -156,33 +156,65 @@ class DistributorCreateSerializer(serializers.ModelSerializer):
         return instance
 
 
+# class DistributorHierarchySerializer(serializers.ModelSerializer):
+#     user = UserSerializer(read_only=True)
+#     downline = serializers.SerializerMethodField()
+
+#     downline_count = serializers.SerializerMethodField()
+#     active_downline_count = serializers.SerializerMethodField()
+
+#     class Meta:
+#         model = Distributor
+#         fields = (
+#             'id', 'user', 'rank', 'level', 'pbv', 'cgv',
+#             'bonus_percentage',
+#             'downline_count', 'active_downline_count',
+#             'downline',
+#         )
+
+#     def get_downline(self, obj):
+#         return DistributorHierarchySerializer(
+#             obj.downline_members.select_related('user').all(),
+#             many=True,
+#         ).data
+
+#     def get_downline_count(self, obj):
+#         return obj.downline_members.count()
+
+#     def get_active_downline_count(self, obj):
+#         return obj.downline_members.filter(user__status='active').count()
+
+
 class DistributorHierarchySerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
     downline = serializers.SerializerMethodField()
-
     downline_count = serializers.SerializerMethodField()
     active_downline_count = serializers.SerializerMethodField()
+    is_active = serializers.SerializerMethodField()          # 👈 add
 
     class Meta:
         model = Distributor
         fields = (
             'id', 'user', 'rank', 'level', 'pbv', 'cgv',
-            'bonus_percentage',
+            'bonus_percentage', 'join_date',                  # 👈 add
             'downline_count', 'active_downline_count',
+            'is_active',                                      # 👈 add
             'downline',
         )
 
     def get_downline(self, obj):
-        return DistributorHierarchySerializer(
-            obj.downline_members.select_related('user').all(),
-            many=True,
-        ).data
+        # Prefetch to avoid N+1
+        children = obj.downline_members.select_related('user').all()
+        return DistributorHierarchySerializer(children, many=True).data
 
     def get_downline_count(self, obj):
         return obj.downline_members.count()
 
     def get_active_downline_count(self, obj):
         return obj.downline_members.filter(user__status='active').count()
+
+    def get_is_active(self, obj):
+        return getattr(obj.user, 'status', 'active') == 'active'
 
 
 class DistributorStatsSerializer(serializers.Serializer):

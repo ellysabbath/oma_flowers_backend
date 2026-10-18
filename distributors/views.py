@@ -101,11 +101,40 @@ class DistributorHierarchyView(generics.RetrieveAPIView):
 
 # ==================== HIERARCHY (mine) ====================
 
+# class MyHierarchyView(APIView):
+#     """
+#     GET /api/v1/distributors/me/hierarchy/
+#     Returns { distributor: {...}, downline: [...] } for the logged-in user.
+#     """
+#     permission_classes = [permissions.IsAuthenticated]
+
+#     def get(self, request):
+#         try:
+#             me = request.user.distributor_profile
+#         except AttributeError:
+#             return Response(
+#                 {'error': 'You are not registered as a distributor.'},
+#                 status=status.HTTP_404_NOT_FOUND,
+#             )
+
+#         children = me.downline_members.select_related('user').all()
+#         serializer = DistributorHierarchySerializer(children, many=True)
+
+#         return Response({
+#             'distributor': {
+#                 'id': me.id,
+#                 'name': me.user.get_full_name() or me.user.username,
+#                 'rank': me.rank,
+#                 'level': me.level,
+#                 'pbv': str(me.pbv),
+#                 'cgv': str(me.cgv),
+#                 'bonus_percentage': str(me.bonus_percentage),
+#             },
+#             'downline': serializer.data,
+#         })
+
+
 class MyHierarchyView(APIView):
-    """
-    GET /api/v1/distributors/me/hierarchy/
-    Returns { distributor: {...}, downline: [...] } for the logged-in user.
-    """
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
@@ -120,10 +149,19 @@ class MyHierarchyView(APIView):
         children = me.downline_members.select_related('user').all()
         serializer = DistributorHierarchySerializer(children, many=True)
 
+        # Use full_name if available, else get_full_name, else username
+        display_name = (
+            getattr(me.user, 'full_name', None)
+            or me.user.get_full_name()
+            or me.user.username
+        )
+
         return Response({
             'distributor': {
                 'id': me.id,
-                'name': me.user.get_full_name() or me.user.username,
+                'name': display_name,
+                'email': me.user.email,                    # 👈 add
+                'phone': getattr(me.user, 'phone', ''),    # 👈 add
                 'rank': me.rank,
                 'level': me.level,
                 'pbv': str(me.pbv),
