@@ -5,8 +5,8 @@ Minimal Africa's Talking SMS client.
 No third-party SDK. Just `requests` against AT's REST endpoint.
 Docs: https://developers.africastalking.com/docs/sms/sending
 
-The function never raises — a broken SMS provider must not break
-registration or password-reset flows.
+Never raises — a broken SMS provider must not break registration or
+password-reset flows.
 """
 
 from __future__ import annotations
@@ -19,12 +19,6 @@ import requests
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
-
-# ------------------------------------------------------------------
-# Configuration — override via Django settings or environment vars
-# ------------------------------------------------------------------
-# Priority: settings.AT_* > os.environ AT_* > built-in defaults.
-# In production, use environment variables — never hardcode keys.
 
 AT_USERNAME = getattr(
     settings, "AT_USERNAME", os.environ.get("AT_USERNAME", "bahi")
@@ -50,27 +44,14 @@ AT_BASE_URL = getattr(
 )
 
 
-# ------------------------------------------------------------------
-# Internal
-# ------------------------------------------------------------------
-
 def _normalize_phone(phone: str) -> str:
-    """
-    Normalize a phone number into E.164-ish format required by AT.
-
-    Handles:
-      - 0712345678     → +255712345678  (Tanzania local)
-      - 255712345678   → +255712345678
-      - +255712345678  → +255712345678
-      - spaces, dashes → stripped
-
-    Assumes Tanzania (+255) when the number is local. Adjust the
-    country-code logic if you serve multiple countries.
-    """
+    """Normalize to E.164-ish form, assuming +255 (Tanzania) for locals."""
     if not phone:
         return ""
 
-    cleaned = "".join(c for c in str(phone).strip() if c.isdigit() or c == "+")
+    cleaned = "".join(
+        c for c in str(phone).strip() if c.isdigit() or c == "+"
+    )
 
     if cleaned.startswith("+"):
         return cleaned
@@ -78,17 +59,12 @@ def _normalize_phone(phone: str) -> str:
         return "+" + cleaned
     if cleaned.startswith("0") and len(cleaned) >= 10:
         return "+255" + cleaned[1:]
-    # Fallback: if it looks like a full number without leading 0
     if len(cleaned) >= 10:
         return "+" + cleaned
     return cleaned
 
 
 def _recipient_list(phones: Iterable[str] | str) -> str:
-    """
-    AT expects recipients as a comma-separated string.
-    Accepts either a single phone string or an iterable.
-    """
     if isinstance(phones, str):
         items = [phones]
     else:
@@ -98,10 +74,6 @@ def _recipient_list(phones: Iterable[str] | str) -> str:
     normalized = [p for p in normalized if p]
     return ",".join(normalized)
 
-
-# ------------------------------------------------------------------
-# Public API
-# ------------------------------------------------------------------
 
 def send_sms(phone: str, message: str) -> bool:
     """
@@ -135,10 +107,7 @@ def send_sms(phone: str, message: str) -> bool:
 
     try:
         response = requests.post(
-            AT_BASE_URL,
-            data=payload,
-            headers=headers,
-            timeout=15,
+            AT_BASE_URL, data=payload, headers=headers, timeout=15
         )
         if response.status_code >= 400:
             logger.error(
@@ -149,12 +118,10 @@ def send_sms(phone: str, message: str) -> bool:
             )
             return False
 
-        # AT returns 200 with a body like:
-        # { "SMSMessageData": { "Message": "Sent to 1/1 Total Cost: ...", ... } }
         try:
             body = response.json()
             summary = body.get("SMSMessageData", {}).get("Message", "")
-        except Exception:
+        except Exception:  # noqa: BLE001
             summary = ""
 
         logger.info("SMS sent to %s — %s", to, summary or "ok")

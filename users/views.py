@@ -2,13 +2,9 @@
 """
 Authentication views for OMA Flowers.
 
-All verification-code flows (register, resend, password reset,
-verify email, verify reset) delegate to `auth.utils` so there is
-exactly one place that generates codes, invalidates old ones, and
-delivers them via **email and SMS**.
-
-Other endpoints (login, logout, profile, admin user list) are
-unchanged in behaviour from the original implementation.
+Verification-code flows delegate to `auth.utils`. Login accepts a
+single `identifier` (OMA User ID | email | username) + password;
+legacy `{ email, password }` payloads still work.
 """
 
 import logging
@@ -25,6 +21,7 @@ from .serializers import (
     UserSerializer,
     RegisterSerializer,
     LoginSerializer,
+    LoginUserSerializer,
     ChangePasswordSerializer,
     EmailVerificationSerializer,
     ResetPasswordRequestSerializer,
@@ -46,14 +43,6 @@ logger = logging.getLogger(__name__)
 # ==================================================================
 
 class RegisterView(generics.CreateAPIView):
-    """
-    Register a new user.
-
-    On success:
-      - User is created (inactive until email is verified).
-      - A 6-digit verification code is generated and delivered via
-        email AND SMS (when the user has a phone number).
-    """
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
 
@@ -62,42 +51,44 @@ class RegisterView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
 
-        # Invalidate old, generate new, send email + SMS.
-        # Both channels are fire-and-forget: a failure on either is
-        # logged inside the util and never raises.
+        # user.user_id is set on first save() — send it in the email
+        # and SMS alongside the verification code.
         _, email_sent, sms_sent = issue_verification_code(user)
+
         if not email_sent and not sms_sent:
             logger.warning(
-                "Verification code could not be delivered to %s "
-                "on email or SMS — user can request a new one.",
-                user.email,
+                "Verification code could not be delivered to %s on email "
+                "or SMS — user can request a new one.", user.email,
             )
 
-        # Pick the most useful message based on which channels worked.
         if email_sent and sms_sent:
             message = (
-                "Registration successful. A verification code has been "
-                "sent to your email and phone."
+                "Registration successful. Your OMA User ID and a "
+                "verification code have been sent to your email and phone."
             )
         elif email_sent:
             message = (
-                "Registration successful. Please check your email for "
-                "the verification code."
+                "Registration successful. Your OMA User ID and a "
+                "verification code have been sent to your email."
             )
         elif sms_sent:
             message = (
-                "Registration successful. Please check your phone for "
-                "the verification code."
+                "Registration successful. Your OMA User ID and a "
+                "verification code have been sent to your phone."
             )
         else:
             message = (
-                "Registration successful, but we could not send the "
-                "verification code. Please use 'Resend verification' "
-                "in a moment."
+                "Registration successful, but we could not send your OMA "
+                "User ID or verification code. Please use 'Resend "
+                "verification' in a moment."
             )
 
         return Response(
-            {"message": message, "email": user.email},
+            {
+                "message": message,
+                "email": user.email,
+                "user_id": user.user_id,
+            },
             status=status.HTTP_201_CREATED,
         )
 
@@ -107,7 +98,6 @@ class RegisterView(generics.CreateAPIView):
 # ==================================================================
 
 class LoginView(APIView):
-    """Authenticate with email + password."""
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
@@ -133,15 +123,14 @@ class LoginView(APIView):
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Distributor profile unavailable for %s: %s",
-                    user.email,
-                    exc,
+                    user.email, exc,
                 )
 
         return Response(
             {
                 "refresh": str(refresh),
                 "access": str(refresh.access_token),
-                "user": LoginSerializer(
+                "user": LoginUserSerializer(
                     user, context={"request": request}
                 ).data,
                 "distributor": distributor_data,
@@ -152,7 +141,6 @@ class LoginView(APIView):
 
 
 class RefreshTokenView(APIView):
-    """Exchange a refresh token for a new access token."""
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
@@ -175,7 +163,6 @@ class RefreshTokenView(APIView):
 
 
 class LogoutView(APIView):
-    """Blacklist the provided refresh token."""
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
@@ -185,7 +172,6 @@ class LogoutView(APIView):
                 RefreshToken(refresh_token).blacklist()
         except Exception as exc:  # noqa: BLE001
             logger.info("Logout blacklist failed: %s", exc)
-
         return Response({"message": "Logged out successfully"})
 
 
@@ -194,7 +180,6 @@ class LogoutView(APIView):
 # ==================================================================
 
 class UserProfileView(generics.RetrieveAPIView):
-    """Return the authenticated user's profile."""
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -203,7 +188,6 @@ class UserProfileView(generics.RetrieveAPIView):
 
 
 class UpdateProfileView(generics.UpdateAPIView):
-    """Update the authenticated user's profile."""
     serializer_class = UpdateProfileSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -212,7 +196,6 @@ class UpdateProfileView(generics.UpdateAPIView):
 
 
 class ChangePasswordView(APIView):
-    """Change the current user's password."""
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
@@ -228,7 +211,6 @@ class ChangePasswordView(APIView):
 
         user.set_password(serializer.validated_data["new_password"])
         user.save(update_fields=["password"])
-
         return Response({"message": "Password changed successfully"})
 
 
@@ -237,7 +219,6 @@ class ChangePasswordView(APIView):
 # ==================================================================
 
 class VerifyEmailView(APIView):
-    """Consume a verification code and activate the account."""
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
@@ -282,11 +263,7 @@ class VerifyEmailView(APIView):
         user.email_verified_at = timezone.now()
         user.status = "active"
         user.save(
-            update_fields=[
-                "email_verified",
-                "email_verified_at",
-                "status",
-            ]
+            update_fields=["email_verified", "email_verified_at", "status"]
         )
 
         logger.info("Email verified: %s", email)
@@ -294,7 +271,6 @@ class VerifyEmailView(APIView):
 
 
 class ResendVerificationView(APIView):
-    """Issue a fresh verification code via email + SMS."""
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
@@ -319,7 +295,6 @@ class ResendVerificationView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Invalidate old codes, generate new, deliver via email + SMS.
         _, email_sent, sms_sent = resend_verification_code(user)
 
         if not email_sent and not sms_sent:
@@ -334,9 +309,7 @@ class ResendVerificationView(APIView):
             )
 
         if email_sent and sms_sent:
-            message = (
-                "New verification code sent to your email and phone."
-            )
+            message = "New verification code sent to your email and phone."
         elif email_sent:
             message = "New verification code sent to your email."
         else:
@@ -350,7 +323,6 @@ class ResendVerificationView(APIView):
 # ==================================================================
 
 class ResetPasswordRequestView(APIView):
-    """Send a password-reset code via email + SMS."""
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
@@ -361,8 +333,6 @@ class ResetPasswordRequestView(APIView):
         try:
             user = User.objects.get(email=email)
         except User.DoesNotExist:
-            # Never reveal whether the email exists — always return
-            # the same message to prevent user enumeration.
             logger.info("Password reset: unknown user %s", email)
             return Response(
                 {
@@ -376,24 +346,20 @@ class ResetPasswordRequestView(APIView):
         _, email_sent, sms_sent = issue_password_reset_code(user)
         if not email_sent and not sms_sent:
             logger.error(
-                "Password reset code failed to send on BOTH channels "
-                "for %s",
+                "Password reset code failed to send on BOTH channels for %s",
                 email,
             )
 
-        # Same response regardless — no enumeration.
         return Response(
             {
                 "message": (
-                    "If that email is registered, a reset code "
-                    "has been sent."
+                    "If that email is registered, a reset code has been sent."
                 )
             }
         )
 
 
 class ResetPasswordVerifyView(APIView):
-    """Consume a password-reset code and set the new password."""
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
@@ -440,10 +406,6 @@ class ResetPasswordVerifyView(APIView):
 # ==================================================================
 
 class AdminUsersListView(generics.ListAPIView):
-    """
-    List non-distributor, non-admin users — used when converting
-    an existing user into a distributor.
-    """
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -464,21 +426,14 @@ class AdminUsersListView(generics.ListAPIView):
         if exclude_distributors == "true":
             queryset = queryset.exclude(user_type="distributor")
 
-        queryset = queryset.exclude(user_type="admin")
-        return queryset
+        return queryset.exclude(user_type="admin")
 
 
 class CustomerListView(generics.ListAPIView):
-    """List all users with user_type='customer'."""
     queryset = User.objects.filter(user_type="customer").order_by(
         "-created_at"
     )
     serializer_class = UserSerializer
     permission_classes = [permissions.AllowAny]
     filter_backends = [filters.SearchFilter]
-    search_fields = [
-        "email",
-        "first_name",
-        "last_name",
-        "full_name",
-    ]
+    search_fields = ["email", "first_name", "last_name", "user_id"]

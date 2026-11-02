@@ -1,39 +1,49 @@
 # auth/serializers.py
+"""
+Serializers for OMA Flowers auth.
+
+Login now accepts a single `identifier` (OMA User ID | email | username)
+alongside `password`. Legacy `{ email, password }` payloads still work.
+"""
+
 import base64
 import binascii
 
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
+from django.db.models import Q
 from rest_framework import serializers
 
 from .models import User
 
-
 # ---------------------------------------------------------------------------
-# Fields shared by every serializer (must match `User` in src/types/index.ts)
+# Field lists shared by every serializer (must match src/types/index.ts)
 # ---------------------------------------------------------------------------
 USER_SCALAR_FIELDS = (
-    'id', 'email', 'username', 'first_name', 'last_name', 'full_name',
-    'phone', 'country', 'region', 'city',
-    'user_type', 'status', 'email_verified', 'email_verified_at',
-    'created_at', 'updated_at',
-    'last_login', 'date_joined',
-    'is_active', 'is_staff', 'is_superuser',
+    "id", "user_id",
+    "email", "username", "first_name", "last_name", "full_name",
+    "phone", "country", "region", "city",
+    "user_type", "status", "email_verified", "email_verified_at",
+    "created_at", "updated_at",
+    "last_login", "date_joined",
+    "is_active", "is_staff", "is_superuser",
 )
 
 USER_READ_ONLY = (
-    'id', 'email_verified', 'created_at', 'updated_at',
-    'user_type', 'status',
-    'last_login', 'date_joined',
-    'is_active', 'is_staff', 'is_superuser',
+    "id", "user_id",
+    "email_verified", "created_at", "updated_at",
+    "user_type", "status",
+    "last_login", "date_joined",
+    "is_active", "is_staff", "is_superuser",
 )
 
-# 5 MB of base64 ≈ 3.75 MB original — generous but bounded.
-MAX_PROFILE_PICTURE_B64_LEN = 5 * 1024 * 1024
+MAX_PROFILE_PICTURE_B64_LEN = 5 * 1024 * 1024  # 5 MB
 
 
 def _full_name(obj) -> str:
-    return (obj.full_name or f"{obj.first_name or ''} {obj.last_name or ''}").strip()
+    return (
+        obj.full_name or f"{obj.first_name or ''} {obj.last_name or ''}"
+    ).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -44,8 +54,8 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = USER_SCALAR_FIELDS + ('profile_picture',)
-        read_only_fields = USER_READ_ONLY + ('profile_picture',)
+        fields = USER_SCALAR_FIELDS + ("profile_picture",)
+        read_only_fields = USER_READ_ONLY + ("profile_picture",)
 
     def get_full_name(self, obj):
         return _full_name(obj)
@@ -55,20 +65,13 @@ class UserSerializer(serializers.ModelSerializer):
 # Login user (lean — NO base64, just a boolean flag)
 # ---------------------------------------------------------------------------
 class LoginUserSerializer(serializers.ModelSerializer):
-    """
-    What /auth/login/ returns. Type-complete for `User` in
-    src/types/index.ts, plus a tiny `has_profile_picture` hint.
-    Never returns the base64 blob.
-    """
     full_name = serializers.SerializerMethodField()
     has_profile_picture = serializers.SerializerMethodField()
     profile_picture = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        # `profile_picture` is included in the field list only so the JSON
-        # shape matches `User` — but the getter returns None, never base64.
-        fields = USER_SCALAR_FIELDS + ('profile_picture', 'has_profile_picture')
+        fields = USER_SCALAR_FIELDS + ("profile_picture", "has_profile_picture")
         read_only_fields = fields
 
     def get_full_name(self, obj):
@@ -78,12 +81,11 @@ class LoginUserSerializer(serializers.ModelSerializer):
         return bool(obj.profile_picture)
 
     def get_profile_picture(self, obj):
-        # ✅ Deliberately empty — login must never ship base64.
-        return None
+        return None  # login must never ship base64
 
 
 # ---------------------------------------------------------------------------
-# Register — unchanged except profile size validation
+# Register
 # ---------------------------------------------------------------------------
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
@@ -94,9 +96,9 @@ class RegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = (
-            'email', 'username', 'first_name', 'last_name', 'phone',
-            'country', 'region', 'city', 'profile_picture',
-            'password', 'password2',
+            "email", "username", "first_name", "last_name", "phone",
+            "country", "region", "city", "profile_picture",
+            "password", "password2",
         )
 
     def validate_profile_picture(self, value):
@@ -105,72 +107,100 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate_email(self, value):
         if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError(
-                'A user with this email already exists.'
+                "A user with this email already exists."
             )
         return value
 
     def validate_username(self, value):
         if User.objects.filter(username__iexact=value).exists():
-            raise serializers.ValidationError('This username is already taken.')
+            raise serializers.ValidationError(
+                "This username is already taken."
+            )
         return value
 
     def validate(self, attrs):
-        if attrs['password'] != attrs['password2']:
+        if attrs["password"] != attrs["password2"]:
             raise serializers.ValidationError(
-                {'password2': "Password fields didn't match."}
+                {"password2": "Password fields didn't match."}
             )
         return attrs
 
     def create(self, validated_data):
-        validated_data.pop('password2')
-        password = validated_data.pop('password')
+        validated_data.pop("password2")
+        password = validated_data.pop("password")
         user = User.objects.create_user(password=password, **validated_data)
-        user.user_type = 'customer'
-        user.status = 'pending'
-        user.save(update_fields=['user_type', 'status'])
+        user.user_type = "customer"
+        user.status = "pending"
+        user.save(update_fields=["user_type", "status"])
         return user
 
 
 # ---------------------------------------------------------------------------
-# Login — unchanged
+# Login — identifier (user_id | email | username) + password
 # ---------------------------------------------------------------------------
 class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    identifier = serializers.CharField(required=False, allow_blank=True)
+    email = serializers.EmailField(required=False, allow_blank=True)
     password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
-        email = attrs.get('email')
-        password = attrs.get('password')
+        identifier = (
+            attrs.get("identifier") or attrs.get("email") or ""
+        ).strip()
+        password = attrs.get("password")
 
-        user = authenticate(email=email, password=password)
-        if user is None:
-            user = authenticate(username=email, password=password)
-
-        if user is None:
-            existing = User.objects.filter(email__iexact=email).first()
-            if existing and existing.status == 'banned':
-                raise serializers.ValidationError(
-                    {'error': 'Your account has been banned.'}
-                )
-            if existing and not existing.is_active:
-                raise serializers.ValidationError(
-                    {'error': 'This account is inactive. Please contact support.'}
-                )
+        if not identifier:
             raise serializers.ValidationError(
-                {'error': 'Invalid email or password.'}
+                {"identifier": "User ID, email, or username is required."}
             )
 
-        if user.status == 'banned':
+        # Look up the candidate — but do NOT leak whether they exist.
+        candidate = (
+            User.objects.filter(
+                Q(user_id__iexact=identifier)
+                | Q(email__iexact=identifier)
+                | Q(username__iexact=identifier)
+            ).first()
+        )
+
+        # Authenticate against the resolved email (USERNAME_FIELD).
+        authed = None
+        if candidate:
+            authed = authenticate(email=candidate.email, password=password)
+
+        # Legacy fallbacks (raw identifier used as email/username)
+        if authed is None:
+            authed = authenticate(username=identifier, password=password)
+        if authed is None:
+            authed = authenticate(email=identifier, password=password)
+
+        if authed is None:
+            if candidate and candidate.status == "banned":
+                raise serializers.ValidationError(
+                    {"error": "Your account has been banned."}
+                )
+            if candidate and not candidate.is_active:
+                raise serializers.ValidationError(
+                    {
+                        "error": "This account is inactive. "
+                        "Please contact support."
+                    }
+                )
             raise serializers.ValidationError(
-                {'error': 'Your account has been banned.'}
+                {"error": "Invalid credentials."}
             )
 
-        attrs['user'] = user
+        if authed.status == "banned":
+            raise serializers.ValidationError(
+                {"error": "Your account has been banned."}
+            )
+
+        attrs["user"] = authed
         return attrs
 
 
 # ---------------------------------------------------------------------------
-# Change password — unchanged
+# Change password
 # ---------------------------------------------------------------------------
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(required=True, write_only=True)
@@ -180,15 +210,15 @@ class ChangePasswordSerializer(serializers.Serializer):
     confirm_password = serializers.CharField(required=True, write_only=True)
 
     def validate(self, attrs):
-        if attrs['new_password'] != attrs['confirm_password']:
+        if attrs["new_password"] != attrs["confirm_password"]:
             raise serializers.ValidationError(
-                {'confirm_password': "Passwords don't match."}
+                {"confirm_password": "Passwords don't match."}
             )
         return attrs
 
 
 # ---------------------------------------------------------------------------
-# Email verification / password reset — unchanged
+# Verification / reset
 # ---------------------------------------------------------------------------
 class EmailVerificationSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
@@ -208,22 +238,22 @@ class ResetPasswordVerifySerializer(serializers.Serializer):
     confirm_password = serializers.CharField(required=True, write_only=True)
 
     def validate(self, attrs):
-        if attrs['password'] != attrs['confirm_password']:
+        if attrs["password"] != attrs["confirm_password"]:
             raise serializers.ValidationError(
-                {'confirm_password': "Passwords don't match."}
+                {"confirm_password": "Passwords don't match."}
             )
         return attrs
 
 
 # ---------------------------------------------------------------------------
-# Profile update — accepts base64 but with a hard size cap
+# Profile update
 # ---------------------------------------------------------------------------
 class UpdateProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = (
-            'first_name', 'last_name', 'phone', 'country', 'region',
-            'city', 'profile_picture',
+            "first_name", "last_name", "phone", "country", "region",
+            "city", "profile_picture",
         )
 
     def validate_profile_picture(self, value):
@@ -234,45 +264,40 @@ class UpdateProfileSerializer(serializers.ModelSerializer):
 # Helpers
 # ---------------------------------------------------------------------------
 def _validate_base64_picture(value):
-    """
-    Accept either:
-      * None / ''                → clear the picture
-      * 'data:image/...;base64,…' → base64 data URI
-    Reject anything else, or anything larger than MAX_PROFILE_PICTURE_B64_LEN.
-    """
-    if value in (None, ''):
+    if value in (None, ""):
         return value
 
     if not isinstance(value, str):
-        raise serializers.ValidationError('profile_picture must be a string.')
+        raise serializers.ValidationError("profile_picture must be a string.")
 
     if len(value) > MAX_PROFILE_PICTURE_B64_LEN:
         mb = MAX_PROFILE_PICTURE_B64_LEN / (1024 * 1024)
         raise serializers.ValidationError(
-            f'Profile picture is too large (max {mb:.0f} MB after base64 encoding). '
-            'Please upload a smaller image.'
+            f"Profile picture is too large (max {mb:.0f} MB after base64 "
+            "encoding). Please upload a smaller image."
         )
 
-    if not value.startswith('data:image/'):
+    if not value.startswith("data:image/"):
         raise serializers.ValidationError(
             'profile_picture must be a data URI of the form '
             '"data:image/<type>;base64,<data>".'
         )
 
-    # Validate it actually decodes (cheap sanity check on the header).
     try:
-        header, b64 = value.split(',', 1)
+        header, b64 = value.split(",", 1)
     except ValueError:
-        raise serializers.ValidationError('Malformed data URI.')
+        raise serializers.ValidationError("Malformed data URI.")
 
-    if ';base64' not in header:
+    if ";base64" not in header:
         raise serializers.ValidationError(
-            'profile_picture data URI must use base64 encoding.'
+            "profile_picture data URI must use base64 encoding."
         )
 
     try:
         base64.b64decode(b64, validate=True)
     except (binascii.Error, ValueError):
-        raise serializers.ValidationError('profile_picture is not valid base64.')
+        raise serializers.ValidationError(
+            "profile_picture is not valid base64."
+        )
 
     return value
