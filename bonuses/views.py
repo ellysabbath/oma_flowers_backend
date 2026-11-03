@@ -3,12 +3,17 @@ from decimal import Decimal
 from datetime import date
 
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import generics, filters
 from django_filters.rest_framework import DjangoFilterBackend
 
 from distributors.models import Distributor
 from .models import Bonus
 from .serializers import BonusSerializer
+
+# SMS notification helper (text message only — no money movement).
+# Requires utils/__init__.py to exist at the project root.
+from .utils.notifications import notify_bonus_paid
 
 
 # ------------------------------------------------------------------
@@ -208,3 +213,17 @@ class BonusDetailView(generics.RetrieveUpdateAPIView):
     permission_classes = []
     authentication_classes = []
     lookup_field = 'id'
+
+    def perform_update(self, serializer):
+        """Save the update, then SMS the user + admin if it just became paid."""
+        before = serializer.instance.status
+        bonus = serializer.save()
+
+        # Only fire when a bonus transitions INTO 'paid'
+        if before != 'paid' and bonus.status == 'paid':
+            if not bonus.payment_date:
+                bonus.payment_date = timezone.localdate()
+                bonus.save(update_fields=['payment_date'])
+
+            # SMS notification only — no money movement.
+            notify_bonus_paid(bonus)
